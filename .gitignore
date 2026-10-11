@@ -1,0 +1,6 @@
+# Build trees and archives scripts/build.sh writes.
+/build/
+/dist/
+
+__pycache__/
+*.pyc
