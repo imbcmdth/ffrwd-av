@@ -1,0 +1,151 @@
+name: Build
+
+# Builds the LGPL-only shared libav libraries the ffrwd sidecar wheel ships:
+# one archive per wheel platform (Linux glibc and musl, Windows, each on x64
+# and aarch64; macOS on Apple silicon). A tag builds every platform and
+# publishes a release carrying the archives and pins.json; the release waits
+# on the whole matrix, so it ships complete or not at all.
+# workflow_dispatch builds every platform and uploads the archives as
+# artifacts without releasing.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  # Archive names carry the tag; a dispatch run carries the commit instead.
+  ARCHIVE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('dev-{0}', github.sha) }}
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    # The aarch64 Linux builds run under QEMU and set this ceiling; the
+    # others finish well inside it.
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Built inside the same manylinux and musllinux images the wheels'
+          # platform tags promise, so the libraries need no newer glibc or
+          # musl than the wheel does.
+          - platform: manylinux-x86_64
+            os: ubuntu-latest
+            image: quay.io/pypa/manylinux_2_28_x86_64
+            docker: linux/amd64
+          # Emulated rather than cross-compiled: the aarch64 image's own
+          # package manager supplies the libva and vulkan headers, and the
+          # script runs unchanged. Slower, and nothing waits on it.
+          - platform: manylinux-aarch64
+            os: ubuntu-latest
+            image: quay.io/pypa/manylinux_2_28_aarch64
+            docker: linux/arm64
+          - platform: musllinux-x86_64
+            os: ubuntu-latest
+            image: quay.io/pypa/musllinux_1_2_x86_64
+            docker: linux/amd64
+          - platform: musllinux-aarch64
+            os: ubuntu-latest
+            image: quay.io/pypa/musllinux_1_2_aarch64
+            docker: linux/arm64
+          - platform: macos-aarch64
+            os: macos-latest
+          # mingw-w64 DLLs from MSYS2's UCRT64 environment: the same C
+          # runtime the sidecar's MSVC build uses.
+          - platform: windows-x86_64
+            os: windows-latest
+            msys2: UCRT64
+          # Cross-compiled with llvm-mingw on the Linux runner; the script
+          # fetches the pinned toolchain itself.
+          - platform: windows-aarch64
+            os: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        if: matrix.docker == 'linux/arm64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up MSYS2
+        if: matrix.msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.msys2 }}
+          update: true
+          install: >-
+            make
+            diffutils
+            git
+            tar
+            xz
+            curl
+          pacboy: >-
+            gcc:p
+            nasm:p
+            pkgconf:p
+
+      - name: Build in the container
+        if: matrix.image
+        run: |
+          docker run --rm --platform "${{ matrix.docker }}" \
+            -v "$GITHUB_WORKSPACE:/work" -w /work \
+            "${{ matrix.image }}" \
+            sh scripts/build.sh "${{ matrix.platform }}" "$ARCHIVE_TAG"
+
+      - name: Build in MSYS2
+        if: matrix.msys2
+        shell: msys2 {0}
+        run: sh scripts/build.sh "${{ matrix.platform }}" "$ARCHIVE_TAG"
+
+      - name: Build on the runner
+        if: "!matrix.image && !matrix.msys2"
+        run: sh scripts/build.sh "${{ matrix.platform }}" "$ARCHIVE_TAG"
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: av-${{ matrix.platform }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  # pins.json is written for a dispatch too, against the URLs a release of
+  # this commit would have, so the file can be inspected before a tag.
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Collect the archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: av-*
+          merge-multiple: true
+          path: dist
+
+      - name: Write pins.json
+        run: python3 scripts/pins.py dist "https://github.com/$GITHUB_REPOSITORY/releases/download/$ARCHIVE_TAG" > dist/pins.json
+
+      - name: Upload pins.json
+        uses: actions/upload-artifact@v4
+        with:
+          name: pins
+          path: dist/pins.json
+
+      # Tags only: a dispatch run builds everything and releases nothing.
+      - name: Create the GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ffmpeg=$(tar -xzOf dist/ffrwd-av-*-manylinux-x86_64.tar.gz --wildcards '*/VERSION' | head -n 1)
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --verify-tag \
+            --notes "LGPL-only shared libavutil, libswresample, libavcodec and libswscale built from FFmpeg ${ffmpeg#ffmpeg }. pins.json maps each platform to its archive's URL, sha256 and size in bytes." \
+            dist/*.tar.gz dist/pins.json
