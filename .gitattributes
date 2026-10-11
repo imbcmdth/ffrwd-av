@@ -1,0 +1,2 @@
+# LF everywhere, including Windows checkouts: MSYS2's sh reads build.sh.
+* text=auto eol=lf
