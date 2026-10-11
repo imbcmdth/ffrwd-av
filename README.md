@@ -1,0 +1,289 @@
+# ffrwd-av-builds
+
+LGPL-only shared builds of libavutil, libswresample, libavcodec and
+libswscale for the ffrwd sidecar wheel (`ffrwd-wasm`). The sidecar loads
+them at run time, and each platform's wheel carries its archive's
+libraries beside the sidecar binary, so `pip install ffrwd` remains the
+whole install.
+
+Every build is FFmpeg tag `n9.0.1`:
+
+| library       | major | Linux               | macOS                  | Windows            |
+|---------------|-------|---------------------|------------------------|--------------------|
+| libavutil     | 61    | `libavutil.so.61`   | `libavutil.61.dylib`   | `avutil-61.dll`    |
+| libswresample | 7     | `libswresample.so.7`| `libswresample.7.dylib`| `swresample-7.dll` |
+| libavcodec    | 63    | `libavcodec.so.63`  | `libavcodec.63.dylib`  | `avcodec-63.dll`   |
+| libswscale    | 10    | `libswscale.so.10`  | `libswscale.10.dylib`  | `swscale-10.dll`   |
+
+No libavformat, libavfilter or libavdevice is built. Nothing is configured
+with `--enable-gpl` or `--enable-nonfree`, and no external encoder library
+is linked.
+
+## Platforms
+
+The platform names are the sidecar wheel's targets, and each is built
+where the wheel's platform tag says it runs:
+
+| platform            | built on                                                   |
+|---------------------|------------------------------------------------------------|
+| `manylinux-x86_64`  | `quay.io/pypa/manylinux_2_28_x86_64`                       |
+| `manylinux-aarch64` | `quay.io/pypa/manylinux_2_28_aarch64`, under QEMU          |
+| `musllinux-x86_64`  | `quay.io/pypa/musllinux_1_2_x86_64`                        |
+| `musllinux-aarch64` | `quay.io/pypa/musllinux_1_2_aarch64`, under QEMU           |
+| `macos-aarch64`     | `macos-latest`                                             |
+| `windows-x86_64`    | `windows-latest`, MSYS2 UCRT64 with gcc                    |
+| `windows-aarch64`   | `ubuntu-latest`, cross-compiled with llvm-mingw 20260616   |
+
+The two aarch64 Linux builds run their images under QEMU
+(`docker/setup-qemu-action`) rather than with a cross toolchain. The
+emulated image is the same one the x86_64 build uses, so the build script
+runs unchanged and the image's own `dnf` supplies aarch64 libva and
+vulkan headers, which configure links against while it probes. A cross
+toolchain would need an aarch64 sysroot holding those libraries as well.
+The cost is time: these two jobs take several times longer than the
+others. If this repository is public, GitHub's native `ubuntu-24.04-arm`
+runners would remove that cost and change nothing else.
+
+The Windows DLLs are built with mingw-w64 against the UCRT, the C runtime
+the sidecar's MSVC build also uses. A mingw-built DLL loads into an MSVC
+process; FFmpeg's API frees what it allocates, so no allocation crosses
+the two.
+
+## Sources
+
+Every source is pinned in `scripts/build.sh`:
+
+- FFmpeg `n9.0.1`, `https://ffmpeg.org/releases/ffmpeg-9.0.1.tar.xz`,
+  sha256 `cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f635`
+  (12036420 bytes). The same digest is published by Homebrew's and
+  MacPorts' ffmpeg 9.0.1 packages.
+- nv-codec-headers (MIT) `n12.1.14.0`, cloned at the tag and checked
+  against commit `1889e62e2d35ff7aa9baca2bceb14f053785e6f1`, on the Linux
+  glibc and Windows builds. 12.1.14.0 is the oldest release FFmpeg 9.0's
+  configure prefers, and an older header release keeps the NVIDIA driver
+  minimum low: 530.41.03 on Linux, 531.61 on Windows.
+- AMF headers (MIT) `v1.5.2`, the release's `AMF-headers-v1.5.2.tar.gz`,
+  sha256 `d3c12eb324edf05e214608b6a395a51dd95770ed9d45520185d6c3a206811c99`,
+  on Windows x86_64 only. 1.5.2 is the oldest FFmpeg 9.0 accepts; FFmpeg
+  initialises AMF with the headers' version, so newer headers can raise
+  the AMD driver minimum.
+- llvm-mingw `20260616`, `llvm-mingw-20260616-ucrt-ubuntu-22.04-x86_64.tar.xz`,
+  sha256 `534b92e067b22a6b4441f48ae9240a3341b17825d04d577eab0cf85c44b4deda`,
+  for windows-aarch64.
+- libva and vulkan headers come from the manylinux image's package
+  manager (`libva-devel`, `vulkan-headers`).
+
+The script also checks the four majors in the FFmpeg source against the
+table above before building.
+
+## Configure lines
+
+All platforms share this start, with `<build>` the platform's build
+directory:
+
+```sh
+./configure --prefix=<build>/prefix \
+  --disable-everything --disable-programs --disable-doc \
+  --disable-static --enable-shared \
+  --disable-avformat --disable-avfilter --disable-avdevice \
+  --enable-swscale --enable-swresample \
+  --disable-network --disable-autodetect --enable-pic \
+  --enable-decoder=h264,hevc,av1,vp9,mpeg2video,prores,mjpeg,ffv1,mpeg4 \
+  --enable-parser=h264,hevc,av1,vp9,mpegvideo,mjpeg,mpeg4video \
+  --enable-bsf=h264_mp4toannexb,hevc_mp4toannexb,extract_extradata \
+  --enable-encoder=ffv1,mpeg4,mpeg2video,mjpeg \
+```
+
+followed by each platform's own flags.
+
+**manylinux-x86_64, manylinux-aarch64**
+
+```sh
+  --enable-ffnvcodec --enable-cuda --enable-nvdec --enable-nvenc \
+  --enable-vaapi --enable-vulkan \
+  --enable-hwaccel=h264_nvdec,hevc_nvdec,av1_nvdec,vp9_nvdec,mpeg2_nvdec,h264_vaapi,hevc_vaapi,av1_vaapi,vp9_vaapi,mpeg2_vaapi,h264_vulkan,hevc_vulkan,av1_vulkan \
+  --enable-encoder=h264_nvenc,hevc_nvenc,av1_nvenc,h264_vaapi,hevc_vaapi,av1_vaapi \
+  --enable-pthreads \
+  --extra-ldflags="-Wl,-rpath,'\\\$\\\$ORIGIN'"
+```
+
+**musllinux-x86_64, musllinux-aarch64** (software codecs only)
+
+```sh
+  --enable-pthreads \
+  --extra-ldflags="-Wl,-rpath,'\\\$\\\$ORIGIN'"
+```
+
+**macos-aarch64**
+
+```sh
+  --enable-videotoolbox \
+  --enable-hwaccel=h264_videotoolbox,hevc_videotoolbox,prores_videotoolbox \
+  --enable-encoder=h264_videotoolbox,hevc_videotoolbox,prores_videotoolbox \
+  --enable-pthreads --install-name-dir=@rpath \
+  --extra-cflags=-mmacosx-version-min=11.0 \
+  --extra-ldflags=-mmacosx-version-min=11.0 \
+  --extra-ldflags=-Wl,-rpath,@loader_path
+```
+
+**windows-x86_64**
+
+```sh
+  --enable-ffnvcodec --enable-cuda --enable-nvdec --enable-nvenc \
+  --enable-d3d11va --enable-d3d12va --enable-dxva2 --enable-mediafoundation \
+  --enable-amf \
+  --enable-hwaccel=h264_d3d11va,hevc_d3d11va,av1_d3d11va,vp9_d3d11va,mpeg2_d3d11va,h264_d3d12va,hevc_d3d12va,av1_d3d12va,vp9_d3d12va,mpeg2_d3d12va,h264_dxva2,hevc_dxva2,h264_nvdec,hevc_nvdec,av1_nvdec,vp9_nvdec,mpeg2_nvdec \
+  --enable-encoder=h264_nvenc,hevc_nvenc,av1_nvenc,h264_amf,hevc_amf,av1_amf,h264_mf,hevc_mf \
+  --enable-w32threads --extra-ldflags=-static
+```
+
+**windows-aarch64**
+
+```sh
+  --enable-ffnvcodec --enable-cuda --enable-nvdec --enable-nvenc \
+  --enable-d3d11va --enable-d3d12va --enable-dxva2 --enable-mediafoundation \
+  --enable-hwaccel=h264_d3d11va,hevc_d3d11va,av1_d3d11va,vp9_d3d11va,mpeg2_d3d11va,h264_d3d12va,hevc_d3d12va,av1_d3d12va,vp9_d3d12va,mpeg2_d3d12va,h264_dxva2,hevc_dxva2,h264_nvdec,hevc_nvdec,av1_nvdec,vp9_nvdec,mpeg2_nvdec \
+  --enable-encoder=h264_nvenc,hevc_nvenc,av1_nvenc,h264_mf,hevc_mf \
+  --enable-w32threads --extra-ldflags=-static \
+  --enable-cross-compile --arch=aarch64 --target-os=mingw32 \
+  --cross-prefix=aarch64-w64-mingw32- --cc=aarch64-w64-mingw32-clang \
+  --pkg-config=pkg-config
+```
+
+The exact line each build ran is the `CONFIGURE` file in its archive.
+
+### Flags beyond the component lists
+
+- `--disable-postproc` is not passed. libpostproc left FFmpeg in 8.0, and
+  9.0's configure rejects the option as unknown.
+- `--disable-autodetect` also turns off the threading library, so each
+  platform enables its own: `--enable-pthreads`, or `--enable-w32threads`
+  on Windows. Without it every decoder is single-threaded and vulkan
+  cannot be enabled.
+- `--enable-cuda` builds libavutil's CUDA device context, which nvdec and
+  nvenc work through. It is autodetected, so `--disable-autodetect`
+  leaves it off unless named. It needs no CUDA toolkit; the driver is
+  loaded at run time.
+- `$ORIGIN` reaches the linker literally only if it survives configure's
+  `eval` and make's own `$` expansion, so the argument configure receives
+  is `-Wl,-rpath,'\$\$ORIGIN'`. The build checks each library's RUNPATH
+  is exactly `$ORIGIN`.
+- macOS: `--install-name-dir=@rpath` gives each library the install name
+  `@rpath/libavutil.61.dylib` (and so on), so its siblings are found
+  through its `@loader_path` rpath rather than at the build machine's
+  prefix. The minimum macOS is 11.0, the same as the wheel's.
+- Windows: `-static` links the toolchain's own runtime (libgcc and
+  libwinpthread, or llvm-mingw's libunwind) into each DLL, so nothing but
+  system DLLs and the siblings is imported. The build checks each DLL's
+  import table.
+
+### Hardware support per platform
+
+- Linux glibc: NVDEC and NVENC through nv-codec-headers, VA-API, and
+  Vulkan decode. NVIDIA's driver and the Vulkan loader are opened at run
+  time. VA-API is not: libavutil links `libva.so.2` and `libva-drm.so.2`,
+  so on a machine without libva installed libavutil does not load at all.
+- Linux musl: software codecs only, no hardware APIs.
+- macOS: VideoToolbox decode and encode.
+- Windows: D3D11VA, D3D12VA, DXVA2, NVDEC, NVENC, Media Foundation
+  encoders, and AMF on x86_64. All of these open their system or driver
+  DLLs at run time; none is imported.
+
+On manylinux the vaapi and vulkan headers come from the image's package
+manager. When configure cannot find one of the two, the build drops that
+API (`--enable-vaapi` or `--enable-vulkan` and every hwaccel and encoder
+named after it), warns, and records the drop in `CONFIGURE`, rather than
+failing. A hardware hwaccel or encoder that configure turns off for a
+missing type in otherwise present headers is warned and recorded the same
+way; a software component missing fails the build.
+
+What manylinux_2_28 is expected to give, from its AlmaLinux 8 packages:
+
+- `vulkan-headers` 1.3.283, above the 1.3.277 FFmpeg 9.0 requires, so
+  Vulkan is expected to build.
+- `libva-devel` 2.13, which predates libva's AV1 encode API (2.14). The
+  `av1_vaapi` encoder is therefore expected to be disabled on both
+  manylinux platforms and recorded in `CONFIGURE`; AV1 VA-API decoding
+  is unaffected.
+
+### AV1 decoding
+
+libavcodec's native `av1` decoder decodes only through a hwaccel. Without
+NVDEC, VA-API, Vulkan, D3D11VA or D3D12VA hardware AV1 support, these
+libraries do not decode AV1 at all: a software AV1 decoder needs libdav1d,
+which is not in this build. On musl and macOS (no AV1 hwaccel is enabled
+there) AV1 never decodes.
+
+## Archives
+
+Each archive is `ffrwd-av-<tag>-<platform>.tar.gz` and holds one
+directory of the same name containing:
+
+- the four shared libraries, under the file names in the table above and
+  nothing else (no unversioned names, no import libraries, no headers);
+- `COPYING.LGPLv2.1`, the licence text from the FFmpeg tree;
+- `VERSION`: the FFmpeg tag on its first line, then one line per library
+  with its major;
+- `CONFIGURE`: the exact configure line, followed by a `#` line for each
+  API dropped or component configure disabled.
+
+## Licence
+
+The libraries are FFmpeg under the LGPL 2.1 or later. They are shipped as
+shared libraries that the sidecar loads dynamically, and each archive
+carries the LGPL text beside them in `COPYING.LGPLv2.1`; the sidecar
+wheel ships that file in the same directory as the libraries. That, with
+the source tag and configure line recorded here and in each archive, is
+the licence obligation.
+
+## Cutting a release
+
+1. Change the pins in `scripts/build.sh` if needed, commit, and push.
+2. Tag the commit `vN` (annotated) and push the tag.
+3. `.github/workflows/build.yml` builds every platform. When all seven
+   succeed, it creates the GitHub release for the tag with the seven
+   archives and `pins.json` attached. If any platform fails, nothing is
+   released.
+
+A `workflow_dispatch` run builds every platform and uploads the archives
+and `pins.json` as workflow artifacts without releasing; its archive names
+carry `dev-<commit>` instead of a tag.
+
+`pins.json` maps each platform to its archive:
+
+```json
+{
+  "manylinux-x86_64": {
+    "url": "https://github.com/<owner>/ffrwd-av-builds/releases/download/vN/ffrwd-av-vN-manylinux-x86_64.tar.gz",
+    "sha256": "...",
+    "bytes": 12345678
+  }
+}
+```
+
+`scripts/pins.py <dir> <url prefix>` writes it from a directory of
+archives; it fails unless all seven platforms are present, or with
+`--partial` maps those that are.
+
+## How ffrwd-cli uses a release
+
+ffrwd-cli pins a release in `sidecar/ffrwd-wasm/av-pins.json`:
+
+```json
+{
+  "ffmpeg": "n9.0.1",
+  "majors": {"avutil": 61, "swresample": 7, "avcodec": 63, "swscale": 10},
+  "platforms": { ... the contents of this release's pins.json ... }
+}
+```
+
+Its release workflow runs `sidecar/ffrwd-wasm/fetch_av.py` before each
+wheel build. The script picks the platform for the wheel's target,
+downloads the archive, checks its sha256 and size against the pin, and
+places the libraries, `COPYING.LGPLv2.1`, `VERSION` and `CONFIGURE` in
+`sidecar/ffrwd-wasm/ffrwd_wasm_av/`, which the wheel ships as
+`site-packages/ffrwd_wasm_av/`. A platform with no pin builds a wheel
+without codecs.
+
+The release asset URLs must be downloadable without credentials for that
+fetch to work.
