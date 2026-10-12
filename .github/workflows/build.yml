@@ -147,5 +147,5 @@ jobs:
         run: |
           ffmpeg=$(tar -xzOf dist/ffrwd-av-*-manylinux-x86_64.tar.gz --wildcards '*/VERSION' | head -n 1)
           gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --verify-tag \
-            --notes "LGPL-only shared libavutil, libswresample, libavcodec and libswscale built from FFmpeg ${ffmpeg#ffmpeg }. pins.json maps each platform to its archive's URL, sha256 and size in bytes." \
+            --notes "LGPL-only shared libavutil, libswresample, libavcodec, libswscale and libavfilter built from FFmpeg ${ffmpeg#ffmpeg }. pins.json maps each platform to its archive's URL, sha256 and size in bytes." \
             dist/*.tar.gz dist/pins.json

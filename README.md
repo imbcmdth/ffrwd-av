@@ -1,10 +1,10 @@
 # ffrwd-av
 
-LGPL-only shared builds of libavutil, libswresample, libavcodec and
-libswscale for the ffrwd sidecar wheel (`ffrwd-wasm`). The sidecar loads
-them at run time, and each platform's wheel carries its archive's
-libraries beside the sidecar binary, so `pip install ffrwd` remains the
-whole install.
+LGPL-only shared builds of libavutil, libswresample, libavcodec,
+libswscale and libavfilter for the ffrwd sidecar wheel (`ffrwd-wasm`).
+The sidecar loads them at run time, and each platform's wheel carries its
+archive's libraries beside the sidecar binary, so `pip install ffrwd`
+remains the whole install.
 
 Every build is FFmpeg tag `n9.0.1`:
 
@@ -14,10 +14,11 @@ Every build is FFmpeg tag `n9.0.1`:
 | libswresample | 7     | `libswresample.so.7`| `libswresample.7.dylib`| `swresample-7.dll` |
 | libavcodec    | 63    | `libavcodec.so.63`  | `libavcodec.63.dylib`  | `avcodec-63.dll`   |
 | libswscale    | 10    | `libswscale.so.10`  | `libswscale.10.dylib`  | `swscale-10.dll`   |
+| libavfilter   | 12    | `libavfilter.so.12` | `libavfilter.12.dylib` | `avfilter-12.dll`  |
 
-No libavformat, libavfilter or libavdevice is built. Nothing is configured
-with `--enable-gpl` or `--enable-nonfree`, and no external encoder library
-is linked.
+No libavformat or libavdevice is built. Nothing is configured with
+`--enable-gpl` or `--enable-nonfree`, and no external encoder library is
+linked.
 
 ## Platforms
 
@@ -73,7 +74,7 @@ Every source is pinned in `scripts/build.sh`:
 - The vulkan headers come from the manylinux image's package manager
   (`vulkan-headers`).
 
-The script also checks the four majors in the FFmpeg source against the
+The script also checks the five majors in the FFmpeg source against the
 table above before building.
 
 ## Configure lines
@@ -85,13 +86,14 @@ directory:
 ./configure --prefix=<build>/prefix \
   --disable-everything --disable-programs --disable-doc \
   --disable-static --enable-shared \
-  --disable-avformat --disable-avfilter --disable-avdevice \
+  --disable-avformat --enable-avfilter --disable-avdevice \
   --enable-swscale --enable-swresample \
   --disable-network --disable-autodetect --enable-pic \
   --enable-decoder=h264,hevc,av1,vp9,mpeg2video,prores,mjpeg,ffv1,mpeg4 \
   --enable-parser=h264,hevc,av1,vp9,mpegvideo,mjpeg,mpeg4video \
   --enable-bsf=h264_mp4toannexb,hevc_mp4toannexb,extract_extradata \
   --enable-encoder=ffv1,mpeg4,mpeg2video,mjpeg \
+  --enable-filter=buffer,buffersink,format,hwupload,hwdownload,null \
 ```
 
 followed by each platform's own flags.
@@ -99,10 +101,11 @@ followed by each platform's own flags.
 **manylinux-x86_64, manylinux-aarch64**
 
 ```sh
-  --enable-ffnvcodec --enable-cuda --enable-nvdec --enable-nvenc \
+  --enable-ffnvcodec --enable-cuda --enable-cuda-llvm --enable-nvdec --enable-nvenc \
   --enable-vulkan \
   --enable-hwaccel=h264_nvdec,hevc_nvdec,av1_nvdec,vp9_nvdec,mpeg2_nvdec,h264_vulkan,hevc_vulkan,av1_vulkan \
   --enable-encoder=h264_nvenc,hevc_nvenc,av1_nvenc \
+  --enable-filter=scale_cuda,overlay_cuda,pad_cuda,transpose_cuda,yadif_cuda,bwdif_cuda,chromakey_cuda,colorspace_cuda,scale_vulkan,overlay_vulkan,blend_vulkan,transpose_vulkan,flip_vulkan,hflip_vulkan,vflip_vulkan,bwdif_vulkan,gblur_vulkan,avgblur_vulkan,nlmeans_vulkan,xfade_vulkan,chromaber_vulkan \
   --enable-pthreads \
   --extra-ldflags="-Wl,-rpath,'\\\$\\\$\\\$\\\$ORIGIN'"
 ```
@@ -134,6 +137,7 @@ followed by each platform's own flags.
   --enable-amf \
   --enable-hwaccel=h264_d3d11va,hevc_d3d11va,av1_d3d11va,vp9_d3d11va,mpeg2_d3d11va,h264_d3d12va,hevc_d3d12va,av1_d3d12va,vp9_d3d12va,mpeg2_d3d12va,h264_dxva2,hevc_dxva2,h264_nvdec,hevc_nvdec,av1_nvdec,vp9_nvdec,mpeg2_nvdec \
   --enable-encoder=h264_nvenc,hevc_nvenc,av1_nvenc,h264_d3d12va,hevc_d3d12va,h264_amf,hevc_amf,av1_amf,h264_mf,hevc_mf \
+  --enable-filter=scale_d3d12,deinterlace_d3d12 \
   --enable-w32threads --extra-ldflags=-static
 ```
 
@@ -144,6 +148,7 @@ followed by each platform's own flags.
   --enable-d3d11va --enable-d3d12va --enable-dxva2 --enable-mediafoundation \
   --enable-hwaccel=h264_d3d11va,hevc_d3d11va,av1_d3d11va,vp9_d3d11va,mpeg2_d3d11va,h264_d3d12va,hevc_d3d12va,av1_d3d12va,vp9_d3d12va,mpeg2_d3d12va,h264_dxva2,hevc_dxva2,h264_nvdec,hevc_nvdec,av1_nvdec,vp9_nvdec,mpeg2_nvdec \
   --enable-encoder=h264_nvenc,hevc_nvenc,av1_nvenc,h264_d3d12va,hevc_d3d12va,h264_mf,hevc_mf \
+  --enable-filter=scale_d3d12,deinterlace_d3d12 \
   --enable-w32threads --extra-ldflags=-static \
   --enable-cross-compile --arch=aarch64 --target-os=mingw32 \
   --cross-prefix=aarch64-w64-mingw32- --cc=aarch64-w64-mingw32-clang \
@@ -164,6 +169,17 @@ The exact line each build ran is the `CONFIGURE` file in its archive.
   nvenc work through. It is autodetected, so `--disable-autodetect`
   leaves it off unless named. It needs no CUDA toolkit; the driver is
   loaded at run time.
+- `--enable-cuda-llvm` compiles the `_cuda` filters' kernels to PTX with
+  clang's NVPTX target, from the image's `clang` package. The PTX is
+  embedded in libavfilter and the driver compiles it at run time, so no
+  CUDA toolkit is involved. `--enable-cuda-nvcc`, the alternative, is
+  non-free and is not used.
+- The `_vulkan` filters' shaders are compiled to SPIR-V at build time by
+  a GLSL compiler program configure finds on the path (`glslc`,
+  `glslang` or `glslangValidator`; the image's `glslang` package) and
+  embedded in libavfilter. FFmpeg 9.0 has no run-time shader compiler
+  option for them, so the archive carries nothing beyond the five
+  libraries for these filters.
 - `$ORIGIN` is expanded three times before the linker sees it: once by
   configure's `eval`, and twice by make, because the shared-library link
   rule in `ffbuild/library.mak` is a `$(eval)` template that expands
@@ -195,13 +211,49 @@ The exact line each build ran is the `CONFIGURE` file in its archive.
   encoders, and AMF on x86_64. All of these open their system or driver
   DLLs at run time; none is imported.
 
+### Filters per platform
+
+libavfilter carries `buffer`, `buffersink`, `format`, `hwupload`,
+`hwdownload` and `null` on every platform: the two ends of a graph,
+format negotiation, and the moves between host and device memory. No
+other software filter is built; ffmpeg runs those. The hardware filters:
+
+- Linux glibc: `scale_cuda`, `overlay_cuda`, `pad_cuda`,
+  `transpose_cuda`, `yadif_cuda`, `bwdif_cuda`, `chromakey_cuda` and
+  `colorspace_cuda`, when clang can target NVPTX; `scale_vulkan`,
+  `overlay_vulkan`, `blend_vulkan`, `transpose_vulkan`, `flip_vulkan`,
+  `hflip_vulkan`, `vflip_vulkan`, `bwdif_vulkan`, `gblur_vulkan`,
+  `avgblur_vulkan`, `nlmeans_vulkan`, `xfade_vulkan` and
+  `chromaber_vulkan`, when Vulkan is built and a GLSL compiler is found.
+  `libplacebo` is not built: it is a library of its own, with a run-time
+  shader compiler, that the archive would have to carry.
+- Windows: `scale_d3d12` and `deinterlace_d3d12`, which need
+  `ID3D12VideoProcessor` in the toolchain's `d3d12video.h`.
+- Linux musl and macOS: none. macOS's `scale_vt` and `transpose_vt` are
+  not built.
+
+When configure cannot find clang with the NVPTX target, the build drops
+`cuda_llvm` and the `_cuda` filters the way it drops Vulkan, keeps NVDEC
+and NVENC, and records the drop in `CONFIGURE`. A `_vulkan` filter
+without a GLSL compiler, or a `_d3d12` one without the type, is turned
+off by configure and recorded as disabled. A missing software filter
+fails the build.
+
+libavfilter is checked like the others: on Linux it may need only its
+siblings (libavutil and libswscale) and the C library, with a RUNPATH of
+`$ORIGIN`; on Windows only system DLLs and its siblings. The hardware
+filters reach CUDA, Vulkan and D3D12 through libavutil's device
+contexts, which open the driver at run time, so libavfilter imports none
+of them.
+
 On manylinux the vulkan headers come from the image's package manager.
 When configure cannot find them, or finds them older than FFmpeg 9.0
 requires, the build drops Vulkan (`--enable-vulkan` and every hwaccel
-named after it), warns, and records the drop in `CONFIGURE`, rather than
-failing. A hardware hwaccel or encoder that configure turns off for a
-missing type in otherwise present headers is warned and recorded the same
-way; a software component missing fails the build.
+named after it, and every `_vulkan` filter), warns, and records the drop
+in `CONFIGURE`, rather than failing. A hardware hwaccel, encoder or filter
+that configure turns off for a missing type in otherwise present headers
+is warned and recorded the same way; a software component missing fails
+the build.
 
 manylinux_2_28's AlmaLinux 8 packages carry `vulkan-headers` 1.3.283,
 above the 1.3.277 FFmpeg 9.0 requires, so Vulkan is expected to build.
@@ -219,7 +271,7 @@ there) AV1 never decodes.
 Each archive is `ffrwd-av-<tag>-<platform>.tar.gz` and holds one
 directory of the same name containing:
 
-- the four shared libraries, under the file names in the table above and
+- the five shared libraries, under the file names in the table above and
   nothing else (no unversioned names, no import libraries, no headers);
 - `COPYING.LGPLv2.1`, the licence text from the FFmpeg tree;
 - `LICENSE.nv-codec-headers`, on the manylinux and Windows platforms,
@@ -284,7 +336,7 @@ ffrwd-cli pins a release in `sidecar/ffrwd-wasm/av-pins.json`:
 ```json
 {
   "ffmpeg": "n9.0.1",
-  "majors": {"avutil": 61, "swresample": 7, "avcodec": 63, "swscale": 10},
+  "majors": {"avutil": 61, "swresample": 7, "avcodec": 63, "swscale": 10, "avfilter": 12},
   "platforms": { ... the contents of this release's pins.json ... }
 }
 ```

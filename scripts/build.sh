@@ -1,7 +1,7 @@
 #!/bin/sh
-# Builds LGPL-only shared libavutil, libswresample, libavcodec and libswscale
-# for one platform of the ffrwd sidecar wheel, and packs them with the LGPL
-# text into dist/ffrwd-av-<tag>-<platform>.tar.gz.
+# Builds LGPL-only shared libavutil, libswresample, libavcodec, libswscale and
+# libavfilter for one platform of the ffrwd sidecar wheel, and packs them with
+# the LGPL text into dist/ffrwd-av-<tag>-<platform>.tar.gz.
 #
 # Usage: sh scripts/build.sh <platform> <tag>
 #
@@ -29,12 +29,16 @@ LLVM_MINGW_SHA256=534b92e067b22a6b4441f48ae9240a3341b17825d04d577eab0cf85c44b4de
 
 # The library majors the archive's file names carry. Checked against the
 # FFmpeg source before anything is built.
-MAJORS="avutil:61 swresample:7 avcodec:63 swscale:10"
+MAJORS="avutil:61 swresample:7 avcodec:63 swscale:10 avfilter:12"
 
 DECODERS=h264,hevc,av1,vp9,mpeg2video,prores,mjpeg,ffv1,mpeg4
 PARSERS=h264,hevc,av1,vp9,mpegvideo,mjpeg,mpeg4video
 BSFS=h264_mp4toannexb,hevc_mp4toannexb,extract_extradata
 ENCODERS=ffv1,mpeg4,mpeg2video,mjpeg
+# The filters every platform has: a graph's two ends, format negotiation and
+# the moves between host and device memory. The hardware filters are each
+# platform's own, below.
+FILTERS=buffer,buffersink,format,hwupload,hwdownload,null
 
 die() {
     echo "build.sh: $*" >&2
@@ -114,6 +118,11 @@ case $platform in
         # Missing or too old, the vulkan headers drop vulkan from this build
         # rather than failing it; configure decides below.
         dnf install -y vulkan-headers || warn "vulkan-headers is not installable in this image"
+        # clang compiles the _cuda filters' kernels to PTX (--enable-cuda-llvm)
+        # and glslang the _vulkan filters' shaders to SPIR-V, both at build
+        # time only. Without either, configure leaves its filters out.
+        dnf install -y clang || warn "clang is not installable in this image"
+        dnf install -y glslang || warn "glslang is not installable in this image"
         ;;
     musllinux-*)
         apk add --no-cache make pkgconf xz tar curl binutils
@@ -193,11 +202,13 @@ fi
 # --- Configure --------------------------------------------------------------
 
 # --disable-autodetect also turns off the threading library, so each
-# platform names its own. hwaccels and hardware encoders are comma lists;
-# hw_apis are the matching --enable-<api> flags.
+# platform names its own. hwaccels, hardware encoders and hardware filters
+# are comma lists; hw_apis are the matching --enable-<api> flags, spelled
+# with underscores where the flag has hyphens.
 hw_apis=""
 hwaccels=""
 hwencoders=""
+hwfilters=""
 # APIs whose headers come from the image's package manager and may be
 # dropped when configure cannot find them.
 droppable=""
@@ -221,10 +232,12 @@ case $platform in
     manylinux-*)
         # No vaapi: libavutil would link libva at load time and then not
         # load at all on a machine without it.
-        hw_apis="ffnvcodec cuda nvdec nvenc vulkan"
+        hw_apis="ffnvcodec cuda cuda_llvm nvdec nvenc vulkan"
         hwaccels=h264_nvdec,hevc_nvdec,av1_nvdec,vp9_nvdec,mpeg2_nvdec,h264_vulkan,hevc_vulkan,av1_vulkan
         hwencoders=h264_nvenc,hevc_nvenc,av1_nvenc
-        droppable="vulkan"
+        hwfilters=scale_cuda,overlay_cuda,pad_cuda,transpose_cuda,yadif_cuda,bwdif_cuda,chromakey_cuda,colorspace_cuda
+        hwfilters=$hwfilters,scale_vulkan,overlay_vulkan,blend_vulkan,transpose_vulkan,flip_vulkan,hflip_vulkan,vflip_vulkan,bwdif_vulkan,gblur_vulkan,avgblur_vulkan,nlmeans_vulkan,xfade_vulkan,chromaber_vulkan
+        droppable="vulkan cuda_llvm"
         add --enable-pthreads "--extra-ldflags=$rpath_origin"
         ;;
     musllinux-*)
@@ -248,6 +261,7 @@ case $platform in
             hwencoders=$hwencoders,h264_amf,hevc_amf,av1_amf
         fi
         hwencoders=$hwencoders,h264_mf,hevc_mf
+        hwfilters=scale_d3d12,deinterlace_d3d12
         # -static keeps libgcc, libwinpthread and their llvm-mingw
         # counterparts inside the DLLs instead of beside them.
         add --enable-w32threads --extra-ldflags=-static
@@ -261,15 +275,27 @@ esac
 
 dropped=""
 
-# drop <api>: removes the API and every hwaccel and encoder named after it.
+# without <suffix> <list>: the comma list without the names ending in _<suffix>.
+without() {
+    printf '%s' "$2" | tr ',' '\n' | grep -v "_$1\$" | tr '\n' ',' | sed 's/,$//'
+}
+
+# drop <api>: removes the API and every hwaccel, encoder and filter named
+# after it. cuda_llvm is the compiler of the _cuda filters, so dropping it
+# removes those filters and leaves nvdec and nvenc.
 drop() {
     kept=""
     for a in $hw_apis; do
         [ "$a" = "$1" ] || kept="$kept $a"
     done
     hw_apis=${kept# }
-    hwaccels=$(printf '%s' "$hwaccels" | tr ',' '\n' | grep -v "_$1\$" | tr '\n' ',' | sed 's/,$//')
-    hwencoders=$(printf '%s' "$hwencoders" | tr ',' '\n' | grep -v "_$1\$" | tr '\n' ',' | sed 's/,$//')
+    if [ "$1" = cuda_llvm ]; then
+        hwfilters=$(without cuda "$hwfilters")
+    else
+        hwaccels=$(without "$1" "$hwaccels")
+        hwencoders=$(without "$1" "$hwencoders")
+        hwfilters=$(without "$1" "$hwfilters")
+    fi
     dropped="$dropped $1"
 }
 
@@ -277,18 +303,20 @@ configure_line() {
     line=$(quote "--prefix=$prefix")
     for a in --disable-everything --disable-programs --disable-doc \
         --disable-static --enable-shared \
-        --disable-avformat --disable-avfilter --disable-avdevice \
+        --disable-avformat --enable-avfilter --disable-avdevice \
         --enable-swscale --enable-swresample \
         --disable-network --disable-autodetect --enable-pic \
         "--enable-decoder=$DECODERS" "--enable-parser=$PARSERS" \
-        "--enable-bsf=$BSFS" "--enable-encoder=$ENCODERS"; do
+        "--enable-bsf=$BSFS" "--enable-encoder=$ENCODERS" \
+        "--enable-filter=$FILTERS"; do
         line="$line $(quote "$a")"
     done
     for a in $hw_apis; do
-        line="$line --enable-$a"
+        line="$line --enable-$(printf '%s' "$a" | tr '_' '-')"
     done
     [ -z "$hwaccels" ] || line="$line $(quote "--enable-hwaccel=$hwaccels")"
     [ -z "$hwencoders" ] || line="$line $(quote "--enable-encoder=$hwencoders")"
+    [ -z "$hwfilters" ] || line="$line $(quote "--enable-filter=$hwfilters")"
     printf '%s%s' "$line" "$platform_args"
 }
 
@@ -303,7 +331,7 @@ while :; do
     case " $droppable " in
         *" $missing "*)
             if [ -n "$missing" ]; then
-                warn "$platform: configure found no $missing headers; building without $missing"
+                warn "$platform: configure did not find $missing; building without it"
                 drop "$missing"
                 continue
             fi
@@ -336,6 +364,8 @@ check_components bsf "$BSFS" required
 check_components encoder "$ENCODERS" required
 check_components hwaccel "$hwaccels" optional
 check_components encoder "$hwencoders" optional
+check_components filter "$FILTERS" required
+check_components filter "$hwfilters" optional
 
 # --- Build ------------------------------------------------------------------
 
@@ -497,7 +527,7 @@ fi
 {
     echo "./configure $args"
     for api in $dropped; do
-        echo "# dropped: $api, configure found no headers for it"
+        echo "# dropped: $api, configure did not find it"
     done
     for c in $disabled; do
         echo "# disabled by configure: $c"
