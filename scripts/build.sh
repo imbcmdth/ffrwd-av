@@ -38,7 +38,9 @@ ENCODERS=ffv1,mpeg4,mpeg2video,mjpeg
 # The filters every platform has: a graph's two ends, format negotiation and
 # the moves between host and device memory. The hardware filters are each
 # platform's own, below.
-FILTERS=buffer,buffersink,format,hwupload,hwdownload,null
+# The buffer source and sink are always built into libavfilter and have no
+# configure switch (allfilters.c adds them by hand), so they are not asked for.
+FILTERS=format,hwupload,hwdownload,null
 
 die() {
     echo "build.sh: $*" >&2

@@ -93,7 +93,7 @@ directory:
   --enable-parser=h264,hevc,av1,vp9,mpegvideo,mjpeg,mpeg4video \
   --enable-bsf=h264_mp4toannexb,hevc_mp4toannexb,extract_extradata \
   --enable-encoder=ffv1,mpeg4,mpeg2video,mjpeg \
-  --enable-filter=buffer,buffersink,format,hwupload,hwdownload,null \
+  --enable-filter=format,hwupload,hwdownload,null \
 ```
 
 followed by each platform's own flags.
