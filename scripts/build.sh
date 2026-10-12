@@ -122,6 +122,10 @@ case $platform in
         fi
         ;;
     windows-aarch64)
+        command -v pkg-config >/dev/null 2>&1 || {
+            sudo apt-get update
+            sudo apt-get install -y pkg-config
+        }
         fetch "$LLVM_MINGW_URL" "$LLVM_MINGW_SHA256" "$work/llvm-mingw.tar.xz"
         mkdir -p "$work/llvm-mingw"
         tar -xf "$work/llvm-mingw.tar.xz" -C "$work/llvm-mingw" --strip-components=1
@@ -145,8 +149,14 @@ tar -xf "$work/ffmpeg.tar.xz" -C "$src" --strip-components=1
 for pair in $MAJORS; do
     lib=${pair%%:*}
     want=${pair#*:}
-    got=$(sed -n "s/^#define LIB$(upper "$lib")_VERSION_MAJOR *\([0-9]*\).*/\1/p" "$src/lib$lib/version_major.h")
-    [ "$got" = "$want" ] || die "lib$lib major is $got in $FFMPEG_TAG, expected $want"
+    # libavutil defines its major in version.h; the others in version_major.h.
+    got=""
+    for header in "$src/lib$lib/version_major.h" "$src/lib$lib/version.h"; do
+        [ -f "$header" ] || continue
+        got=$(sed -n "s/^#define LIB$(upper "$lib")_VERSION_MAJOR[[:space:]][[:space:]]*\([0-9][0-9]*\).*/\1/p" "$header")
+        [ -z "$got" ] || break
+    done
+    [ "$got" = "$want" ] || die "lib$lib major is '$got' in $FFMPEG_TAG, expected $want"
 done
 
 case $platform in
@@ -406,9 +416,10 @@ done
 cp "$src/COPYING.LGPLv2.1" "$stage/COPYING.LGPLv2.1"
 
 # Prints a header's leading comment block without its comment markers:
-# a /* */ block or a run of // lines.
+# a /* */ block or a run of // lines. Carriage returns and a byte-order mark
+# before the first comment are removed first.
 leading_comment() {
-    awk '
+    tr -d '\r' <"$1" | LC_ALL=C sed '1s/^[^/]*//' | awk '
         NR == 1 && /^\/\*/ { style = "block" }
         NR == 1 && /^\/\// { style = "line" }
         style == "block" {
@@ -429,7 +440,7 @@ leading_comment() {
             next
         }
         { exit }
-    ' "$1"
+    '
 }
 
 # notices <title> <header dir> <out>: writes each distinct MIT notice the
