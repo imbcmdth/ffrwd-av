@@ -1,4 +1,4 @@
-# ffrwd-av-builds
+# ffrwd-av
 
 LGPL-only shared builds of libavutil, libswresample, libavcodec and
 libswscale for the ffrwd sidecar wheel (`ffrwd-wasm`). The sidecar loads
@@ -262,7 +262,7 @@ carry `dev-<commit>` instead of a tag.
 ```json
 {
   "manylinux-x86_64": {
-    "url": "https://github.com/<owner>/ffrwd-av-builds/releases/download/vN/ffrwd-av-vN-manylinux-x86_64.tar.gz",
+    "url": "https://github.com/imbcmdth/ffrwd-av/releases/download/vN/ffrwd-av-vN-manylinux-x86_64.tar.gz",
     "sha256": "...",
     "bytes": 12345678
   }
