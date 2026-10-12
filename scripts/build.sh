@@ -111,9 +111,8 @@ case $platform in
         if [ "$platform" = manylinux-x86_64 ]; then
             dnf install -y nasm || dnf install -y --enablerepo=powertools nasm
         fi
-        # Header sets for vaapi and vulkan. A missing one drops that API from
-        # this build rather than failing it; configure decides below.
-        dnf install -y libva-devel || warn "libva-devel is not installable in this image"
+        # Missing or too old, the vulkan headers drop vulkan from this build
+        # rather than failing it; configure decides below.
         dnf install -y vulkan-headers || warn "vulkan-headers is not installable in this image"
         ;;
     musllinux-*)
@@ -167,8 +166,9 @@ if [ "$platform" = windows-x86_64 ]; then
     # directory, so it is found by its contents.
     factory=$(find "$work/amf" -path '*/core/Factory.h' | head -n 1)
     [ -n "$factory" ] || die "no core/Factory.h in the AMF headers archive"
+    amf_include=$(dirname "$(dirname "$factory")")
     mkdir -p "$deps/include/AMF"
-    cp -R "$(dirname "$(dirname "$factory")")/." "$deps/include/AMF/"
+    cp -R "$amf_include/." "$deps/include/AMF/"
 fi
 
 if [ "$platform" = windows-aarch64 ]; then
@@ -202,10 +202,12 @@ add() {
 q="'"
 case $platform in
     manylinux-*)
-        hw_apis="ffnvcodec cuda nvdec nvenc vaapi vulkan"
-        hwaccels=h264_nvdec,hevc_nvdec,av1_nvdec,vp9_nvdec,mpeg2_nvdec,h264_vaapi,hevc_vaapi,av1_vaapi,vp9_vaapi,mpeg2_vaapi,h264_vulkan,hevc_vulkan,av1_vulkan
-        hwencoders=h264_nvenc,hevc_nvenc,av1_nvenc,h264_vaapi,hevc_vaapi,av1_vaapi
-        droppable="vaapi vulkan"
+        # No vaapi: libavutil would link libva at load time and then not
+        # load at all on a machine without it.
+        hw_apis="ffnvcodec cuda nvdec nvenc vulkan"
+        hwaccels=h264_nvdec,hevc_nvdec,av1_nvdec,vp9_nvdec,mpeg2_nvdec,h264_vulkan,hevc_vulkan,av1_vulkan
+        hwencoders=h264_nvenc,hevc_nvenc,av1_nvenc
+        droppable="vulkan"
         # $ORIGIN survives configure's eval as \$\$ and make's expansion as
         # '$$', and reaches the linker as the literal $ORIGIN.
         add --enable-pthreads "--extra-ldflags=-Wl,-rpath,${q}\\\$\\\$ORIGIN${q}"
@@ -369,8 +371,6 @@ for lib in $siblings; do
                 echo "$lib needs $dep"
                 case $dep in
                     libc.so | libc.so.6 | libm.so.6 | libpthread.so.0 | libdl.so.2 | librt.so.1 | libgcc_s.so.1 | ld-linux* | libc.musl-* | ld-musl-*) ;;
-                    # libva for vaapi: present wherever vaapi can be used.
-                    libva.so.2 | libva-drm.so.2) ;;
                     *) is_sibling "$dep" || die "$lib needs $dep" ;;
                 esac
             done
@@ -404,6 +404,72 @@ for lib in $siblings; do
 done
 
 cp "$src/COPYING.LGPLv2.1" "$stage/COPYING.LGPLv2.1"
+
+# Prints a header's leading comment block without its comment markers:
+# a /* */ block or a run of // lines.
+leading_comment() {
+    awk '
+        NR == 1 && /^\/\*/ { style = "block" }
+        NR == 1 && /^\/\// { style = "line" }
+        style == "block" {
+            last = ($0 ~ /\*\//)
+            line = $0
+            sub(/^\/\*+ ?/, "", line)
+            sub(/^ *\*\/.*$/, "", line)
+            sub(/^ *\* ?/, "", line)
+            print line
+            if (last) exit
+            next
+        }
+        style == "line" {
+            if ($0 !~ /^\/\//) exit
+            line = $0
+            sub(/^\/\/ ?/, "", line)
+            print line
+            next
+        }
+        { exit }
+    ' "$1"
+}
+
+# notices <title> <header dir> <out>: writes each distinct MIT notice the
+# headers under the directory carry, with the headers that carry it. The
+# headers' code (NVIDIA's and AMD's runtime loaders) is compiled into the
+# libraries, so their notices travel with them.
+notices() {
+    tmp=$work/notices
+    rm -rf "$tmp"
+    mkdir -p "$tmp"
+    find "$2" -name '*.h' | sort | while IFS= read -r header; do
+        leading_comment "$header" >"$tmp/notice"
+        grep -q 'Permission is hereby granted' "$tmp/notice" || continue
+        key=$(cksum <"$tmp/notice" | cut -d' ' -f1)
+        [ -e "$tmp/$key.txt" ] || cp "$tmp/notice" "$tmp/$key.txt"
+        echo "${header#"$2"/}" >>"$tmp/$key.files"
+    done
+    {
+        echo "Code from $1 is compiled into these libraries. Its headers carry the notices below."
+        for notice in "$tmp"/*.txt; do
+            [ -e "$notice" ] || continue
+            echo
+            echo "----------------------------------------------------------------------"
+            echo "Carried by: $(tr '\n' ' ' <"${notice%.txt}.files")"
+            echo
+            cat "$notice"
+        done
+    } >"$3"
+    grep -q 'Permission is hereby granted' "$3" || die "no MIT notice in the headers under $2"
+}
+
+case $platform in
+    manylinux-* | windows-*)
+        notices "nv-codec-headers $NVCODEC_TAG ($NVCODEC_REPO)" \
+            "$work/nv-codec-headers/include" "$stage/LICENSE.nv-codec-headers"
+        ;;
+esac
+if [ "$platform" = windows-x86_64 ]; then
+    notices "the AMF headers ($AMF_URL)" "$amf_include" "$stage/LICENSE.AMF"
+fi
 
 {
     echo "ffmpeg $FFMPEG_TAG"
