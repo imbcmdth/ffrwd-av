@@ -104,14 +104,14 @@ followed by each platform's own flags.
   --enable-hwaccel=h264_nvdec,hevc_nvdec,av1_nvdec,vp9_nvdec,mpeg2_nvdec,h264_vulkan,hevc_vulkan,av1_vulkan \
   --enable-encoder=h264_nvenc,hevc_nvenc,av1_nvenc \
   --enable-pthreads \
-  --extra-ldflags="-Wl,-rpath,'\\\$\\\$ORIGIN'"
+  --extra-ldflags="-Wl,-rpath,'\\\$\\\$\\\$\\\$ORIGIN'"
 ```
 
 **musllinux-x86_64, musllinux-aarch64** (software codecs only)
 
 ```sh
   --enable-pthreads \
-  --extra-ldflags="-Wl,-rpath,'\\\$\\\$ORIGIN'"
+  --extra-ldflags="-Wl,-rpath,'\\\$\\\$\\\$\\\$ORIGIN'"
 ```
 
 **macos-aarch64**
@@ -164,10 +164,14 @@ The exact line each build ran is the `CONFIGURE` file in its archive.
   nvenc work through. It is autodetected, so `--disable-autodetect`
   leaves it off unless named. It needs no CUDA toolkit; the driver is
   loaded at run time.
-- `$ORIGIN` reaches the linker literally only if it survives configure's
-  `eval` and make's own `$` expansion, so the argument configure receives
-  is `-Wl,-rpath,'\$\$ORIGIN'`. The build checks each library's RUNPATH
-  is exactly `$ORIGIN`.
+- `$ORIGIN` is expanded three times before the linker sees it: once by
+  configure's `eval`, and twice by make, because the shared-library link
+  rule in `ffbuild/library.mak` is a `$(eval)` template that expands
+  `LDFLAGS` when it is evaluated and again when the recipe runs. So the
+  argument configure receives is `-Wl,-rpath,'\$\$\$\$ORIGIN'`,
+  `config.mak` holds `'$$$$ORIGIN'`, and the single quotes keep the shell
+  from expanding the `$ORIGIN` make leaves. The build checks each
+  library's RUNPATH is exactly `$ORIGIN`.
 - macOS: `--install-name-dir=@rpath` gives each library the install name
   `@rpath/libavutil.61.dylib` (and so on), so its siblings are found
   through its `@loader_path` rpath rather than at the build machine's

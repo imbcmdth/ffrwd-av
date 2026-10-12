@@ -209,7 +209,14 @@ add() {
     done
 }
 
+# -Wl,-rpath,$ORIGIN for the Linux builds. Each $ is expanded three times
+# before the linker sees it: by configure's eval, then twice by make, since
+# library.mak's link rule is a $(eval) template whose LDFLAGS is expanded
+# once when the template is evaluated and again when the recipe runs. So
+# configure is given \$\$\$\$, writes $$$$ to config.mak, and the single
+# quotes keep the shell from reading the $ORIGIN make leaves.
 q="'"
+rpath_origin="-Wl,-rpath,${q}\\\$\\\$\\\$\\\$ORIGIN${q}"
 case $platform in
     manylinux-*)
         # No vaapi: libavutil would link libva at load time and then not
@@ -218,12 +225,10 @@ case $platform in
         hwaccels=h264_nvdec,hevc_nvdec,av1_nvdec,vp9_nvdec,mpeg2_nvdec,h264_vulkan,hevc_vulkan,av1_vulkan
         hwencoders=h264_nvenc,hevc_nvenc,av1_nvenc
         droppable="vulkan"
-        # $ORIGIN survives configure's eval as \$\$ and make's expansion as
-        # '$$', and reaches the linker as the literal $ORIGIN.
-        add --enable-pthreads "--extra-ldflags=-Wl,-rpath,${q}\\\$\\\$ORIGIN${q}"
+        add --enable-pthreads "--extra-ldflags=$rpath_origin"
         ;;
     musllinux-*)
-        add --enable-pthreads "--extra-ldflags=-Wl,-rpath,${q}\\\$\\\$ORIGIN${q}"
+        add --enable-pthreads "--extra-ldflags=$rpath_origin"
         ;;
     macos-aarch64)
         hw_apis="videotoolbox"
