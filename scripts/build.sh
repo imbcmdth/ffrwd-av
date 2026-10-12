@@ -242,7 +242,7 @@ case $platform in
     windows-*)
         hw_apis="ffnvcodec cuda nvdec nvenc d3d11va d3d12va dxva2 mediafoundation"
         hwaccels=h264_d3d11va,hevc_d3d11va,av1_d3d11va,vp9_d3d11va,mpeg2_d3d11va,h264_d3d12va,hevc_d3d12va,av1_d3d12va,vp9_d3d12va,mpeg2_d3d12va,h264_dxva2,hevc_dxva2,h264_nvdec,hevc_nvdec,av1_nvdec,vp9_nvdec,mpeg2_nvdec
-        hwencoders=h264_nvenc,hevc_nvenc,av1_nvenc
+        hwencoders=h264_nvenc,hevc_nvenc,av1_nvenc,h264_d3d12va,hevc_d3d12va
         if [ "$platform" = windows-x86_64 ]; then
             hw_apis="$hw_apis amf"
             hwencoders=$hwencoders,h264_amf,hevc_amf,av1_amf

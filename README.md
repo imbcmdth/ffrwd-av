@@ -133,7 +133,7 @@ followed by each platform's own flags.
   --enable-d3d11va --enable-d3d12va --enable-dxva2 --enable-mediafoundation \
   --enable-amf \
   --enable-hwaccel=h264_d3d11va,hevc_d3d11va,av1_d3d11va,vp9_d3d11va,mpeg2_d3d11va,h264_d3d12va,hevc_d3d12va,av1_d3d12va,vp9_d3d12va,mpeg2_d3d12va,h264_dxva2,hevc_dxva2,h264_nvdec,hevc_nvdec,av1_nvdec,vp9_nvdec,mpeg2_nvdec \
-  --enable-encoder=h264_nvenc,hevc_nvenc,av1_nvenc,h264_amf,hevc_amf,av1_amf,h264_mf,hevc_mf \
+  --enable-encoder=h264_nvenc,hevc_nvenc,av1_nvenc,h264_d3d12va,hevc_d3d12va,h264_amf,hevc_amf,av1_amf,h264_mf,hevc_mf \
   --enable-w32threads --extra-ldflags=-static
 ```
 
@@ -143,7 +143,7 @@ followed by each platform's own flags.
   --enable-ffnvcodec --enable-cuda --enable-nvdec --enable-nvenc \
   --enable-d3d11va --enable-d3d12va --enable-dxva2 --enable-mediafoundation \
   --enable-hwaccel=h264_d3d11va,hevc_d3d11va,av1_d3d11va,vp9_d3d11va,mpeg2_d3d11va,h264_d3d12va,hevc_d3d12va,av1_d3d12va,vp9_d3d12va,mpeg2_d3d12va,h264_dxva2,hevc_dxva2,h264_nvdec,hevc_nvdec,av1_nvdec,vp9_nvdec,mpeg2_nvdec \
-  --enable-encoder=h264_nvenc,hevc_nvenc,av1_nvenc,h264_mf,hevc_mf \
+  --enable-encoder=h264_nvenc,hevc_nvenc,av1_nvenc,h264_d3d12va,hevc_d3d12va,h264_mf,hevc_mf \
   --enable-w32threads --extra-ldflags=-static \
   --enable-cross-compile --arch=aarch64 --target-os=mingw32 \
   --cross-prefix=aarch64-w64-mingw32- --cc=aarch64-w64-mingw32-clang \
